@@ -1,0 +1,263 @@
+\documentclass[11pt,letterpaper]{article}
+\usepackage[margin=0.85in]{geometry}
+\usepackage{amsmath,amssymb,graphicx,booktabs,float}
+\usepackage[font=small,labelfont=bf]{caption}
+\usepackage[hidelinks]{hyperref}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{4pt}
+\setlength{\textfloatsep}{10pt}
+\setlength{\intextsep}{8pt}
+\raggedbottom
+\input{report_experiments/report_numbers.tex}
+
+\begin{document}
+\begin{center}
+    {\Large\bfseries CSE 256 PA1: Sentiment Classification and Word Representations}\\[5pt]
+    Jiaqi Wang \quad $\vert$ \quad October 23, 2026
+\end{center}
+
+\section{Task and model}
+I study binary sentiment classification on the supplied movie-review snippets from
+the Stanford Sentiment Treebank~\cite{socher}. The provided split contains 6,920
+training examples and 872 development examples. The supplied reader lowercases
+the tokenized sentences. Development labels are used for model assessment, not
+gradient updates; no held-out test results are reported.
+
+My deep averaging network (DAN) follows the averaging-and-classification idea
+of Iyyer et al.~\cite{iyyer}. For token IDs $t_1,\ldots,t_L$, let $m_i$ be zero
+for padding and one otherwise. The sentence representation and class scores are
+\[
+ h=\frac{\sum_{i=1}^{L}m_i e(t_i)}{\max(1,\sum_{i=1}^{L}m_i)},
+ \qquad
+ z=W_2\,\operatorname{Dropout}\!\left(\operatorname{ReLU}(W_1h+b_1)\right)+b_2.
+\]
+All DANs use 300-dimensional embeddings, one 100-unit hidden layer, dropout 0.2,
+and two output scores. Adam uses learning rate $10^{-3}$ with PyTorch's other
+default settings. Cross-entropy consumes the raw scores; prediction is
+$\arg\max_k z_k$. Every five epochs, loss and accuracy are measured on both
+splits with dropout disabled and without gradients. ``Best dev'' means the
+maximum over these recorded evaluations, not an independently estimated test
+accuracy or a saved model checkpoint.
+ 
+\section{Part 1: GloVe versus learned word embeddings}
+\textbf{Setup.} The first model uses the supplied 300-dimensional GloVe
+vectors~\cite{glove}. Embeddings are frozen, so sentence means are precomputed
+and only the classifier is trained. Missing words use the supplied zero UNK
+vector. The second model uses the same 14,923-entry word index, including PAD
+and UNK, but initializes its embedding matrix randomly and trains it jointly
+with the classifier. Only the index is reused; no GloVe vector values initialize
+this model. PAD is excluded from averaging. Both original experiments run for
+200 epochs with one full-batch parameter update per epoch.
+
+\begin{table}[H]
+\centering\small
+\begin{tabular}{lrrrr}
+\toprule
+Model & Final train (\%) & Final dev (\%) & Best dev (\%) & Best epoch\\
+\midrule
+\PartOneRows
+\bottomrule
+\end{tabular}
+\caption{Original full-batch runs. All final values are from epoch 200.}
+\label{tab:part1}
+\end{table}
+
+\textbf{Results.} Frozen GloVe reaches \GFullBest\% best development accuracy,
+exceeding the assignment's 77\% target. Random embeddings reach \RFullBest\%.
+The learning curves in Figure~\ref{fig:words} distinguish fitting from
+generalization: the random model's final training accuracy is \RFullTrain\%,
+yet its final development accuracy is only \RFullFinal\%. Its development loss
+is lowest at epoch 55 (0.5370), then rises to 1.1575 while training loss falls
+to 0.0031. Development accuracy can remain similar while cross-entropy worsens,
+because cross-entropy also penalizes the confidence of incorrect predictions.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{report_experiments/figures/word_curves.png}
+\caption{Original word-level runs: training and development cross-entropy
+(left) and accuracy (right). Solid lines denote train; dashed lines denote dev.}
+\label{fig:words}
+\end{figure}
+
+\textbf{Interpretation.} Pretrained representations provide a useful starting
+point for this small labeled dataset. The frozen model trains only 30,302
+classifier parameters, whereas the random model trains 4,507,202 parameters,
+including embeddings. Its faster reduction in training loss therefore does not
+show better generalization. This comparison changes both initialization and
+embedding trainability; it does not isolate initialization alone. The original
+runs did not record a random seed or training wall time. They are reported as
+single runs; controlled, timed experiments follow below.
+
+\section{Part 2: BPE and vocabulary size}
+\textbf{Tokenizer.} I implement character-based byte pair encoding (BPE),
+following the subword approach of Sennrich et al.~\cite{bpe}. Each distinct
+training word begins as characters plus an end-of-word symbol \texttt{</w>}.
+At each iteration I count adjacent symbol pairs, weighted by word frequency,
+select the most frequent pair (lexicographic tie-breaking), and merge all its
+non-overlapping occurrences within words. The ordered rules and vocabulary are
+fitted on training text only. Both splits are encoded by applying those rules
+in order, without crossing word boundaries. Unknown characters map to UNK.
+Earlier symbols are retained, so reported vocabulary sizes count all allocated
+symbols, including intermediate merges, PAD, UNK, and the word-end marker.
+
+\textbf{Controlled protocol.} I compare target vocabularies 1,000, 3,000, and
+5,000 with word-level DANs. Every run uses seed 42, batch size 64, 30 epochs,
+the shared classifier above, and two PyTorch CPU threads. Thus each epoch has
+109 parameter updates, unlike the original full-batch runs. All subword
+embeddings are random and trainable. The runs use Windows 11, Python
+\PythonVersion, and PyTorch \TorchVersion. These are single-seed comparisons,
+not estimates of statistical significance.
+
+\begin{table}[H]
+\centering\small
+\begin{tabular}{lrrrrr}
+\toprule
+Representation & Vocabulary & Best dev (\%) & Best epoch & Final dev (\%) & DAN run (s)\\
+\midrule
+\ControlledRows
+\bottomrule
+\end{tabular}
+\caption{Matched 30-epoch, batch-64 experiments. Word models use the supplied
+word index; BPE learns its vocabulary from train. DAN time includes periodic
+evaluation and excludes data preparation.}
+\label{tab:controlled}
+\end{table}
+
+\begin{table}[H]
+\centering\small
+\begin{tabular}{rrrrrr}
+\toprule
+Vocabulary & Merges & Mean train length & BPE fit (s) & Total prep (s) & Trainable params\\
+\midrule
+\EfficiencyRows
+\bottomrule
+\end{tabular}
+\caption{BPE efficiency on the same machine. Length counts non-PAD subwords.
+Total preparation includes BPE fit, encoding, and model setup.
+Parameters include the embedding matrix and classifier.}
+\label{tab:efficiency}
+\end{table}
+
+\textbf{Results and tradeoffs.} The highest observed BPE development accuracy is
+\BestBPEAccuracy\%, attained at vocabulary sizes of \BestBPEVocab\ symbols. The matched
+random word model reaches \ControlledRandomBest\%, and frozen GloVe reaches
+\ControlledGloveBest\%. Moving from 1,000 to 3,000 symbols improves best accuracy
+by 1.95 percentage points; 5,000 gives no further peak gain despite higher
+preparation cost. BPE does not outperform the word-level models in these runs.
+Increasing BPE vocabulary from 1,000 to 5,000 reduces
+mean training sequence length from \SmallBPELength\ to \LargeBPELength\,
+but increases the embedding matrix and the number of tokenizer merges.
+Smaller units share parameters across related words, whereas more complete-word
+units can preserve word-specific sentiment. These are plausible mechanisms;
+the experiments measure the resulting accuracy, not the mechanisms separately.
+Subword averaging also weights words with more pieces more heavily, so it is
+not equivalent to averaging one vector per original word.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{report_experiments/figures/bpe_curves.png}
+\caption{Development curves for the three BPE vocabulary sizes under the
+matched protocol. Best accuracy and smallest loss need not occur at the same epoch.}
+\label{fig:bpe}
+\end{figure}
+
+The tokenizer implementation recounts pairs and scans word representations
+after every merge. Its fit cost consequently grows with the merge budget.
+Encoding repeated words is cached. Shorter encoded sequences do not guarantee
+lower end-to-end cost, because vocabulary growth increases both tokenizer work
+and embedding parameters. Table~\ref{tab:efficiency} reports those costs
+separately. Development monitoring would support early stopping; the reported
+runs themselves always complete their specified epoch budgets.
+
+\section{Part 3: Understanding Skip-Gram}
+Let $v_x$ be a center-word vector and $c_y$ a context vector. The model and
+training objective are
+\[
+ P(y\mid x)=\frac{\exp(v_x^\top c_y)}{\sum_{y'\in V}\exp(v_x^\top c_{y'})},
+ \qquad \mathcal{L}=\sum_{(x,y)\in D}\log P(y\mid x).
+\]
+The vocabulary in both questions is $V=\{\text{a},\text{the},\text{dog},\text{cat}\}$,
+and a window of one produces contexts on both sides within each sentence.
+
+\subsection*{3a. Maximum-likelihood probabilities for \texttt{the}}
+For the three sentences ``the dog'', ``the cat'', and ``a dog'', the examples
+whose center is \texttt{the} are $(\text{the},\text{dog})$ and
+$(\text{the},\text{cat})$. Its objective is
+$\log p_{\mathrm{dog}}+\log p_{\mathrm{cat}}$.
+Since $p_{\mathrm{dog}}+p_{\mathrm{cat}}\leq 1$, their product is at most
+$((p_{\mathrm{dog}}+p_{\mathrm{cat}})/2)^2\leq 1/4$.
+Equality gives the empirical conditional distribution:
+\[
+ P^*(\text{dog}\mid\text{the})=P^*(\text{cat}\mid\text{the})=\tfrac12,
+ \qquad P^*(\text{a}\mid\text{the})=P^*(\text{the}\mid\text{the})=0.
+\]
+These probabilities maximize likelihood without imposing a particular
+embedding parameterization.
+
+\subsection*{3b. A nearly optimal center vector with fixed contexts}
+The specified context vectors are
+$c_{\mathrm{dog}}=c_{\mathrm{cat}}=(0,1)$ and
+$c_{\mathrm{a}}=c_{\mathrm{the}}=(1,0)$.
+Choose $v_{\mathrm{the}}=(0,5)$. Dog and cat each receive score 5; a and the
+each receive score 0. Consequently,
+\[
+ q=\frac{e^5}{2e^5+2}=0.4966536,\qquad
+ r=\frac{1}{2e^5+2}=0.0033464.
+\]
+The two desired contexts receive $q$ each and the others receive $r$ each.
+Every probability differs from its optimum by only $0.0033464<0.01$.
+More generally, $v_{\mathrm{the}}=(0,M)$ approaches the optimum as
+$M\rightarrow\infty$. Finite softmax scores cannot assign exact zero
+probability to the unobserved contexts.
+
+\subsection*{3c. Training examples for the four-sentence corpus}
+Adding ``a cat'' yields eight directed training examples, each once:
+\[
+\begin{array}{ll}
+(\text{the},\text{dog}), & (\text{dog},\text{the}),\\
+(\text{the},\text{cat}), & (\text{cat},\text{the}),\\
+(\text{a},\text{dog}), & (\text{dog},\text{a}),\\
+(\text{a},\text{cat}), & (\text{cat},\text{a}).
+\end{array}
+\]
+Each center has two observations, one for each word in the opposite group:
+$A=\{\text{a},\text{the}\}$ and $B=\{\text{dog},\text{cat}\}$.
+Thus its optimal conditional probabilities are $1/2$ for each opposite-group
+word and zero for each same-group word.
+
+\subsection*{3d. Word and context vectors approaching the global optimum}
+Use separate center and context vectors as follows:
+\begin{center}
+\begin{tabular}{lcc}
+\toprule
+Words & Center vector $v$ & Context vector $c$\\
+\midrule
+\texttt{a}, \texttt{the} & $(0,5)$ & $(1,0)$\\
+\texttt{dog}, \texttt{cat} & $(5,0)$ & $(0,1)$\\
+\bottomrule
+\end{tabular}
+\end{center}
+For every center, opposite-group contexts have score 5 and same-group contexts
+have score 0. Hence the probabilities are again $q$ and $r$ from 3b, respectively,
+and all are within 0.01 of the empirical optima. The joint construction works
+for all four centers simultaneously. Its summed log-likelihood is
+$8\log q\approx-5.5989002$, compared with the supremum
+$8\log(1/2)\approx-5.5451774$. Replacing 5 by $M$ and taking
+$M\rightarrow\infty$ approaches that supremum.
+
+\begin{thebibliography}{4}
+\small
+\bibitem{iyyer} M. Iyyer, V. Manjunatha, J. Boyd-Graber, and H. Daum\'e III.
+Deep Unordered Composition Rivals Syntactic Methods for Text Classification.
+ACL, 2015. \url{https://aclanthology.org/P15-1162/}
+\bibitem{glove} J. Pennington, R. Socher, and C. D. Manning.
+GloVe: Global Vectors for Word Representation. EMNLP, 2014.
+\url{https://aclanthology.org/D14-1162/}
+\bibitem{bpe} R. Sennrich, B. Haddow, and A. Birch.
+Neural Machine Translation of Rare Words with Subword Units. ACL, 2016.
+\url{https://aclanthology.org/P16-1162/}
+\bibitem{socher} R. Socher et al.
+Recursive Deep Models for Semantic Compositionality Over a Sentiment Treebank.
+EMNLP, 2013. \url{https://aclanthology.org/D13-1170/}
+\end{thebibliography}
+\end{document}
