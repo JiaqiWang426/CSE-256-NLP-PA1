@@ -2,35 +2,9 @@
 
 Binary movie-review sentiment classification with word-level and subword-level
 Deep Averaging Networks (DANs). The original Bag-of-Words (BOW) baseline is also
-available. Part 3's Skip-Gram derivations are in the report and do not require a
-separate program.
+available. Part 3's Skip-Gram derivations are in the report.
 
-## 1. Setup and working directory
-
-Use Python 3 with PyTorch, NumPy, scikit-learn, and Matplotlib:
-
-```sh
-python -m pip install torch numpy scikit-learn matplotlib
-```
-
-The report experiments used Python 3.13.14 and PyTorch 2.11.0+cpu. Training runs
-on CPU; a GPU is not required. LaTeX is only needed to rebuild the report PDF.
-
-Run the commands below **from the directory containing `main.py` and `data/`**.
-The program uses relative data paths. Keep these supplied files in place:
-
-```text
-data/
-    train.txt
-    dev.txt
-    glove.6B.300d-relativized.txt
-```
-
-Both word-level variants load this GloVe file. `Embeddings_DAN` uses only its
-word index, then creates randomly initialized embeddings; it does not use the
-pretrained vector values. `SUBWORDDAN` does not load GloVe.
-
-## 2. Run each model
+## 1. Run each model
 
 Model names are case-sensitive. These are the actual names supported by this
 implementation; use `Glove_DAN` or `Embeddings_DAN` rather than `DAN`.
@@ -40,10 +14,6 @@ implementation; use `Glove_DAN` or `Embeddings_DAN` rather than `DAN`.
 ```sh
 python main.py --model BOW
 ```
-
-Trains the supplied two-layer and three-layer BOW networks, each for 100 epochs
-with batch size 16, and evaluates on dev. The DAN-specific epoch, batch-size,
-vocabulary-size, and output-directory options do not change this baseline.
 
 ### Part 1a: DAN with frozen GloVe embeddings
 
